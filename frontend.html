@@ -1,0 +1,160 @@
+<html>
+
+<head>
+    <title>Bushido Rider</title>
+    <meta charset="utf-8">
+
+    <script src="bushido.usb.js"></script>
+    <script src="bushido.sim.js"></script>
+    
+    <!-- Include the CesiumJS JavaScript and CSS files -->
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.74/Build/Cesium/Cesium.js" charset="UTF-8"></script>
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.74/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+    
+    <script src="cesium.token.js"></script>
+
+    <style>
+        #game {
+            height: 100%;
+            width: 100%;
+            display: none;
+            flex-direction: column;
+            justify-content: stretch;
+        }
+
+        #map {
+            flex-grow: 1;
+            position: relative;
+        }
+
+        html {
+            height: 100%;
+        }
+
+        .cesium-viewer {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+        }
+
+        #chart {
+            flex: 1;
+        }
+
+        .ct-series-a .ct-line,
+        .ct-series-a .ct-point {
+            stroke-width: 5px !important;
+            stroke: grey !important;
+        }
+
+        .ct-series-b .ct-line,
+        .ct-series-b .ct-point {
+            stroke-width: 20px !important;
+            stroke: #267fca !important;
+        }
+
+        #overlay {
+            position: absolute;
+            z-index: 1000;
+            top: 20px;
+            right: 20px;
+            width: 400px;
+            height: 200px;
+            background: rgba(255, 255, 255, 0.8);
+            font-size: 35px;
+            color: black;
+            padding: 40px;
+        }
+
+        #pause {
+            position: absolute;
+            z-index: 1001;
+            left: 50vw;
+            top: 50vh;
+            width: auto;
+            background: #267fca;
+            color: white;
+            opacity: 0.8;
+            border-radius: 20px;
+            font-size: 40px;
+            text-align: center;
+            padding: 10px;
+            animation: blink-animation 1s steps(5, start) infinite;
+            margin: -66px -38px;
+        }
+
+        #lower {
+            flex-shrink: 0;
+            height: 200px;
+            display: flex;
+        }
+
+        #forward {
+            width: 200px;
+            background-color: darkgreen;
+            text-align: center;
+            font-size: 40px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            color: white;
+        }
+
+        #rewind {
+            width: 200px;
+            background-color: darkred;
+            text-align: center;
+            font-size: 40px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            color: white;
+        }
+
+        @keyframes blink-animation {
+            to {
+                visibility: hidden;
+            }
+        }
+    </style>
+    <link rel="stylesheet" href="./lib/chartist.css" />
+</head>
+
+<body>
+    <div id="start">
+        <label for="gpxFile">Select GPX file:</label><input type="file" id="gpxFile" multiple="false" accept=".gpx">
+        <input type="button" id="startConversionButton" value="Convert to Tacx Workout"></input>
+    </div>
+    <div id="game">
+        <div id="pause">Paused</div>
+        <div id="overlay"></div>
+        <div id="map"></div>
+        <div id="lower">
+            <div id="rewind"><span>- 1km</span></div>
+            <div id="chart"></div>
+            <div id="forward"><span>+ 1km</span></div>
+        </div>
+    </div>
+
+    <script src="./lib/spline.js"></script>
+    <script src="./lib/gpxParser.js"></script>
+    <script src='https://unpkg.com/@turf/turf/turf.min.js'></script>
+    <script src="./lib/chartist.js"></script>
+    <script>
+        const bushidoConnection = new BushidoUSB();
+
+        const bushidoSimulator = new BushidoSimulator(bushidoConnection, {
+            gpxFileInputId: "gpxFile",
+            overlayElementId: "overlay",
+            gameElementId: "game",
+            mapElementId: "map",
+            startElementId: "start",
+            pauseElementId: "pause",
+            forwardButtonId: "forward",
+            rewindButtonId: "rewind",
+        });
+
+    </script>
+</body>
+
+</html>
