@@ -48,6 +48,7 @@ class BushidoSimulator {
         this.subprogress = 0;
         this.lastRender = performance.now();
         this.bushidoConnection = bushidoConnection;
+        this.recording = [];
 
         if (this.bushidoConnection != null) {
             this.bushidoConnection.onDataUpdated = this.onDataUpdated.bind(this);
@@ -67,6 +68,22 @@ class BushidoSimulator {
         document.getElementById(rewindButtonId).onclick = () => this.seek(-1000);
 
         this.startElement.onclick = () => this.start();
+
+        this.chart = new Chart(document.getElementById("chart"), {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: "Elevation",
+                    data: [],
+                    borderColor: [],
+                }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+            },
+        });
     }
 
     seek(value) {
@@ -130,6 +147,12 @@ class BushidoSimulator {
             this.bushidoConnection.setSlope(nextSlope);
             console.log("sent new slope of", nextSlope);
         }
+        
+        if (Math.ceil(corrected_distance / 20) > Math.ceil(this.progressedDistance / 20)) {
+            this.recording[Math.floor(this.progressedDistance / 20)] = {
+                ...this.bushidoConnection.getData(),
+            };
+        }
 
         this.subprogress = 0;
         this.progressedDistance = corrected_distance;
@@ -162,7 +185,12 @@ class BushidoSimulator {
             animation: false,
         });
 
-        const position = Cesium.Cartesian3.fromDegrees(-123.0744619, 44.0503706, 0);
+        const {
+            lat: startLat,
+            lon: startLng,
+        } = gpx.tracks[0].points[0];
+
+        const position = Cesium.Cartesian3.fromDegrees(startLng, startLat, 1000);
         const heading = Cesium.Math.toRadians(135);
         const orientation = Cesium.Transforms.headingPitchRollQuaternion(position, new Cesium.HeadingPitchRoll(heading, 0, 0));
 
@@ -211,17 +239,23 @@ class BushidoSimulator {
         const currentSegments = this.smoothedSegments.slice(Math.max(0, index - buffer), Math.min(this.smoothedSegments.length, index + buffer + 1));
         const bufferArrLeft = new Array(index - Math.max(0, index - buffer)).fill(null);
         const bufferArrRight = new Array(Math.min(this.smoothedSegments.length, index + buffer) - index).fill(null);
-        const data = {
-            labels: currentSegments.map(s => `${Math.round(s.distance / 1000)}`),
-            series: [currentSegments.map(s => s.elevation), bufferArrLeft.concat([this.smoothedSegments[index].elevation]).concat(bufferArrRight)],
-        };
+        const data = currentSegments.map(s => ({x: s.distance, y: s.elevation}));
 
-        const chart = new Chartist.Line('#chart', data, {
-            axisX: {},
-            axisY: {
-                onlyInteger: true,
-            }
-        }, {});
+        console.log(data);
+
+        this.chart.data.labels.splice(0);
+        this.chart.data.labels.push(...data.map(d => Math.round(d.x / 100) / 10 + " km"));
+
+        this.chart.data.datasets[0].data.splice(0);
+        this.chart.data.datasets[0].data.push(...data);
+
+        this.chart.data.datasets[0].borderColor.splice(0);
+        this.chart.data.datasets[0].borderColor.push(...bufferArrLeft
+                         .map(_ => 'grey')
+                         .concat(['orange'])
+                         .concat(bufferArrRight.map(_ => 'grey')));
+
+        this.chart.update();
     }
 
     async _renderLoop() {
