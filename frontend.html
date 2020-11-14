@@ -70,6 +70,22 @@
             padding: 40px;
         }
 
+        #overlay-paused {
+            position: absolute;
+            z-index: 1000;
+            top: 20px;
+            right: 20px;
+            width: 400px;
+            height: 250px;
+            background: rgba(255, 255, 255, 0.8);
+            font-size: 35px;
+            color: black;
+            padding: 40px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
         #pause {
             position: absolute;
             z-index: 1001;
@@ -132,6 +148,7 @@
     <div id="game">
         <div id="pause">Paused</div>
         <div id="overlay"></div>
+        <div id="overlay-paused"></div>
         <div id="map"></div>
         <div id="lower">
             <div id="rewind"><span>- 1km</span></div>
@@ -146,6 +163,17 @@
     <script src="./lib/chartist.js"></script>
     <script>
         const bushidoConnection = new BushidoUSB();
+        let distance = 0;
+        let speed = 20;
+
+        bushidoConnection.getData = function () {
+            return {
+                speed: speed * 3.6,
+                cadence: Math.random() * 100 % 60,
+                power: Math.random() * 200,
+                distance,
+            };
+        }
 
         const bushidoSimulator = new BushidoSimulator(bushidoConnection, {
             gpxFileInputId: "gpxFile",
@@ -157,6 +185,15 @@
             forwardButtonId: "forward",
             rewindButtonId: "rewind",
         });
+
+        window.setInterval(() => {
+            if (bushidoConnection.isConnected()) {
+                distance += speed;
+                bushidoSimulator.onDistanceUpdated(distance);
+                bushidoSimulator.onDataUpdated(bushidoConnection.getData());
+                speed = Math.abs(speed + Math.random() * 10 - 5);
+            }
+        }, 1000);
 
     </script>
 </body>

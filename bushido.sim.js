@@ -27,6 +27,42 @@ MathHelpers.bearing = (startLat, startLng, destLat, destLng) => {
 }
 
 
+const CHART_METRICS = [
+    {
+        id: "speed",
+        color: "green",
+        datasetIndex: 1,
+    },
+    {
+        id: "cadence",
+        color: "blue",
+        datasetIndex: 2,
+    },
+    {
+        id: "power",
+        color: "red",
+        datasetIndex: 3,
+    },
+];
+
+
+function download(filename, json) {
+    const element = document.createElement("a");
+    element.setAttribute(
+        "href",
+        "data:application/xml;charset=utf-8," + encodeURIComponent(json)
+    );
+    element.setAttribute("download", filename);
+
+    element.style.display = "none";
+    document.body.appendChild(element);
+
+    element.click();
+
+    document.body.removeChild(element);
+}
+
+
 class BushidoSimulator {
 
     constructor(bushidoConnection, {
@@ -63,6 +99,7 @@ class BushidoSimulator {
         this.mapElement = document.getElementById(mapElementId);
         this.startElement = document.getElementById(startElementId);
         this.pauseElement = document.getElementById(pauseElementId);
+        this.overlayPausedElement = document.getElementById("overlay-paused");
 
         document.getElementById(forwardButtonId).onclick = () => this.seek(1000);
         document.getElementById(rewindButtonId).onclick = () => this.seek(-1000);
@@ -72,23 +109,106 @@ class BushidoSimulator {
         this.chart = new Chart(document.getElementById("chart"), {
             type: 'line',
             data: {
-                labels: [],
                 datasets: [{
                     label: "Elevation",
                     data: [],
-                    borderColor: [],
+                    borderColor: 'grey',
+                    yAxisID: 'y-axis-elevation',
+                },
+                {
+                    label: "Geschwindigkeit",
+                    data: [],
+                    borderColor: 'green',
+                    fill: false,
+                    yAxisID: 'y-axis-metrics',
+                },
+                {
+                    label: "Kadenz",
+                    data: [],
+                    borderColor: 'blue',
+                    fill: false,
+                    yAxisID: 'y-axis-metrics',
+                },
+                {
+                    label: "Watt",
+                    data: [],
+                    borderColor: 'red',
+                    fill: false,
+                    yAxisID: 'y-axis-metrics',
                 }],
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                scales: {
+                    xAxes: [{
+                        type: 'linear',
+                        position: 'bottom',
+                        ticks: {
+                            min: 0,
+                            max: 1000,
+                        },
+                    }],
+                    yAxes: [{
+                        type: 'linear', // only linear but allow scale type registration. This allows extensions to exist solely for log scale for instance
+                        display: true,
+                        position: 'left',
+                        id: 'y-axis-elevation',
+                    }, {
+                        type: 'linear', // only linear but allow scale type registration. This allows extensions to exist solely for log scale for instance
+                        display: true,
+                        position: 'right',
+                        id: 'y-axis-metrics',
+                        ticks: {
+                            beginAtZero: true,
+                        },
+
+                        // grid line settings
+                        gridLines: {
+                            drawOnChartArea: false, // only want the grid lines for one axis to show up
+                        },
+                    }],
+                },
             },
         });
     }
 
+    export() {
+        const lines = this.recording.map((entry) => {
+            const pos = this._getPosByDistance(entry.distance);
+            return [pos.longitude, pos.latitude, pos.elevation, new Date(entry.time)];
+        });
+        download("test.xml", this._createXmlString([lines]));
+    }
+
+    _createXmlString(lines) {
+        let result = '<gpx xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd" version="1.1" creator="runtracker"><metadata/><trk><name></name><desc></desc>'
+        result += lines.reduce((accum, curr) => {
+          let segmentTag = '<trkseg>';
+          segmentTag += curr.map((point) => `<trkpt lat="${point[1]}" lon="${point[0]}"><ele>${point[2]}</ele><time>${point[3].toISOString()}</time></trkpt>`).join('');
+          segmentTag += '</trkseg>'
+      
+          return accum += segmentTag;
+        }, '');
+        result += '</trk></gpx>';
+        return result;
+      }
+
     seek(value) {
         this.offset += value;
         this.onDistanceUpdated(this.bushidoConnection.getData().distance);
+    }
+
+    getAverage() {
+        return this.recording.reduce((avg, cur, n) => ({
+            speed: (avg.speed * n + cur.speed) / (n + 1),
+            power: (avg.power * n + cur.power) / (n + 1),
+            cadence: (avg.cadence * n + cur.cadence) / (n + 1),
+        }), {
+            speed: 0,
+            power: 0,
+            cadence: 0,
+        });
     }
 
     async start() {
@@ -124,15 +244,31 @@ class BushidoSimulator {
     }
 
     onDataUpdated(bushidoData) {
-        this.overlayElement.innerHTML = `Speed: ${Math.round(bushidoData.speed * 10) / 10} km/h<br />Cadence: ${bushidoData.cadence}<br />Power: ${bushidoData.power} Watt<br />Distance: ${Math.round((bushidoData.distance + this.offset) / 10) / 100} km (${Math.round((bushidoData.distance + this.offset) * 1000 / (this.smoothedSegments.length * 20)) / 10}%)<br />Slope: ${Math.round(bushidoData.slope * 10) / 10}%`;
+        this.overlayElement.innerHTML = `<b>Speed:</b> ${Math.round(bushidoData.speed * 10) / 10} km/h<br /><b>Cadence</b>: ${Math.round(bushidoData.cadence)}<br /><b>Power</b>: ${Math.round(bushidoData.power)} Watt<br /><b>Distance</b>: ${Math.round((bushidoData.distance + this.offset) / 10) / 100} km (${Math.round((bushidoData.distance + this.offset) * 1000 / (this.smoothedSegments.length * 20)) / 10}%)<br /><b>Slope</b>: ${Math.round(bushidoData.slope * 10) / 10}%`;
     }
 
     onPaused() {
+        const bushidoData = this.bushidoConnection.getData();
         this.pauseElement.style.display = "block";
+        this.overlayElement.style.display = "none";
+        this.overlayPausedElement.style.display = "flex";
+        const {
+            speed: avgSpeed,
+            power: avgPower,
+            cadence: avgCadence,
+        } = this.getAverage();
+        this.overlayPausedElement.innerHTML = `
+            <div>Pausiert bei ${Math.round((bushidoData.distance + this.offset) / 10) / 100} km (${Math.round((bushidoData.distance + this.offset) * 1000 / (this.smoothedSegments.length * 20)) / 10}%)</div>
+            <div style="display:flex"><div style="flex-grow:1">Geschw.:</div><div>${Math.round(avgSpeed * 10) / 10} km/h</div></div>
+            <div style="display:flex"><div style="flex-grow:1">Power:</div><div>${Math.round(avgPower)} Watt</div></div>
+            <div style="display:flex"><div style="flex-grow:1">Kadenz:</div><div>${Math.round(avgCadence)}</div></div>
+            <div style="cursor: pointer; background: #267fca; color: white; text-align: center;" onclick="bushidoSimulator.export()">GPX Herunterladen</div>`;
     }
-
+    
     onResumed() {
         this.pauseElement.style.display = "none";
+        this.overlayElement.style.display = "block";
+        this.overlayPausedElement.style.display = "none";
     }
 
     onDistanceUpdated(distance) {
@@ -148,16 +284,20 @@ class BushidoSimulator {
             console.log("sent new slope of", nextSlope);
         }
         
-        if (Math.ceil(corrected_distance / 20) > Math.ceil(this.progressedDistance / 20)) {
-            this.recording[Math.floor(this.progressedDistance / 20)] = {
-                ...this.bushidoConnection.getData(),
-            };
+        if (!this.bushidoConnection.isPaused()) {
+            if (Math.ceil(corrected_distance / 20) > Math.ceil(this.progressedDistance / 20)) {
+                this.recording[Math.floor(corrected_distance / 20)] = {
+                    ...this.bushidoConnection.getData(),
+                    distance: corrected_distance,
+                    time: Date.now(),
+                };
+            }
         }
 
         this.subprogress = 0;
         this.progressedDistance = corrected_distance;
         console.log("distance now at", corrected_distance);
-        this._drawChart(nextIndex);
+        this._drawChart();
     }
 
     async _readTextFile(file) {
@@ -234,28 +374,32 @@ class BushidoSimulator {
         return [viewer, entity];
     }
 
-    _drawChart(index) {
+    _drawChart() {
+        const index = Math.ceil(this.progressedDistance / 20);
         const buffer = Math.round(1000 / 20);
         const currentSegments = this.smoothedSegments.slice(Math.max(0, index - buffer), Math.min(this.smoothedSegments.length, index + buffer + 1));
-        const bufferArrLeft = new Array(index - Math.max(0, index - buffer)).fill(null);
-        const bufferArrRight = new Array(Math.min(this.smoothedSegments.length, index + buffer) - index).fill(null);
         const data = currentSegments.map(s => ({x: s.distance, y: s.elevation}));
-
-        console.log(data);
-
-        this.chart.data.labels.splice(0);
-        this.chart.data.labels.push(...data.map(d => Math.round(d.x / 100) / 10 + " km"));
 
         this.chart.data.datasets[0].data.splice(0);
         this.chart.data.datasets[0].data.push(...data);
 
-        this.chart.data.datasets[0].borderColor.splice(0);
-        this.chart.data.datasets[0].borderColor.push(...bufferArrLeft
-                         .map(_ => 'grey')
-                         .concat(['orange'])
-                         .concat(bufferArrRight.map(_ => 'grey')));
+        for (const chartMetric of CHART_METRICS) {
+            const dataset = this.chart.data.datasets[chartMetric.datasetIndex];
+            const metricData = data.map(d => this.recording[Math.floor(d.x / 20)] ? ({
+                x: this.recording[Math.floor(d.x / 20)].distance,
+                y: this.recording[Math.floor(d.x / 20)][chartMetric.id],
+            }) : null ).filter(d => d != null);
+
+            dataset.data.splice(0);
+            dataset.data.push(...metricData);
+            dataset.hidden = (Math.round(Date.now() / 10000) % CHART_METRICS.length) + 1 !== chartMetric.datasetIndex;
+        }
+        
+        this.chart.options.scales.xAxes[0].ticks.min = Math.max(0, index - buffer) * 20;
+        this.chart.options.scales.xAxes[0].ticks.max = Math.min(this.smoothedSegments.length, index + buffer) * 20;
 
         this.chart.update();
+        console.log("average:", this.getAverage());
     }
 
     async _renderLoop() {
@@ -388,7 +532,11 @@ class BushidoSimulator {
     }
 
     _getPos() {
-        const nextIndex = Math.ceil((this.progressedDistance + this.subprogress) / 20);
+        return this._getPosByDistance(this.progressedDistance + this.subprogress);
+    }
+
+    _getPosByDistance(distance) {
+        const nextIndex = Math.ceil(distance / 20);
         const nextSegment = this.smoothedSegments[nextIndex];
         const prevSegment = nextIndex > 0 ? this.smoothedSegments[nextIndex - 1] : undefined;
 
@@ -396,14 +544,16 @@ class BushidoSimulator {
             return {
                 latitude: nextSegment.lat,
                 longitude: nextSegment.lng,
+                elevation: nextSegment.elevation,
             };
         } else {
             const coveredDistance = nextSegment.distance - prevSegment.distance;
-            const percent = ((this.progressedDistance + this.subprogress) - prevSegment.distance) / coveredDistance;
+            const percent = (distance - prevSegment.distance) / coveredDistance;
 
             return {
                 latitude: prevSegment.lat + (nextSegment.lat - prevSegment.lat) * percent,
                 longitude: prevSegment.lng + (nextSegment.lng - prevSegment.lng) * percent,
+                elevation: prevSegment.elevation + (nextSegment.elevation - prevSegment.elevation) * percent,
             };
         }
     }
