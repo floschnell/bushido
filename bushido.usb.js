@@ -31,6 +31,10 @@ class Message {
     getContent() {
         return this._content;
     }
+
+    getType() {
+        return this._type;
+    }
 }
 
 
@@ -267,7 +271,6 @@ class BushidoUSB {
     _initializeBushidoConnection() {
         this._queueMessage(new BushidoInitPCConnectionMessage());
         this._queueMessage(new BushidoResetHeadUnitMessage());
-        this._queueMessage(new BushidoStartTimeSlopeMessage());
         this._queueMessage(new BushidoStartCyclingMessage());
     }
 
@@ -287,6 +290,26 @@ class BushidoUSB {
             if (out_message === undefined) break;
             const message_bytes = out_message.encode();
             await this._device.transferOut(1, message_bytes);
+
+            // retry send every second
+            const interval_handle = setInterval(async () => {
+                await this._device.transferOut(1, message_bytes);
+            }, 1000);
+
+            // wait for ACK
+            while (true) {
+                const in_msg = await this._receiveMessage();
+                if (in_msg.getType() === 0x40) {
+                    if ((in_msg.getContent()[1] === out_message.getType())) {
+                        clearInterval(interval_handle);
+                        break;
+                    } else if (in_msg.getContent()[1] === 0x01 && in_msg.getContent()[2] === 0x03) {
+                        clearInterval(interval_handle);
+                        break;
+                    }
+                }
+            }
+
         } while (!(out_message instanceof BroadcastMessage));
     }
     
