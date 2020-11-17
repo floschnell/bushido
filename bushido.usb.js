@@ -104,7 +104,7 @@ class OpenChannelMessage extends Message {
 }
 
 
-class BroadcastMessage extends Message {
+class BushidoMessage extends Message {
 
     constructor(data) {
         super(0x4e, [0x00, ...data]);
@@ -112,15 +112,15 @@ class BroadcastMessage extends Message {
 }
 
 
-class BushidoResetHeadUnitMessage extends BroadcastMessage {
-    
+class BushidoResetHeadUnitMessage extends BushidoMessage {
+
     constructor() {
         super([0xac, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00]);
     }
 }
 
 
-class BushidoContinueMessage extends BroadcastMessage {
+class BushidoContinueMessage extends BushidoMessage {
 
     constructor() {
         super([0xac, 0x03, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00]);
@@ -128,15 +128,15 @@ class BushidoContinueMessage extends BroadcastMessage {
 }
 
 
-class BushidoStartCyclingMessage extends BroadcastMessage {
-    
+class BushidoStartCyclingMessage extends BushidoMessage {
+
     constructor() {
         super([0xac, 0x03, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00]);
     }
 }
 
 
-class BushidoInitPCConnectionMessage extends BroadcastMessage {
+class BushidoInitPCConnectionMessage extends BushidoMessage {
 
     constructor() {
         super([0xac, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00]);
@@ -144,7 +144,7 @@ class BushidoInitPCConnectionMessage extends BroadcastMessage {
 }
 
 
-class BushidoStartTimeSlopeMessage extends BroadcastMessage {
+class BushidoStartTimeSlopeMessage extends BushidoMessage {
 
     constructor() {
         super([0xdc, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
@@ -152,7 +152,7 @@ class BushidoStartTimeSlopeMessage extends BroadcastMessage {
 }
 
 
-class BushidoData01Message extends BroadcastMessage {
+class BushidoData01Message extends BushidoMessage {
 
     constructor(slope, weight) {
         const corrected_slope = Math.max(-50, Math.min(200, Math.round(slope * 10.0)));
@@ -164,7 +164,7 @@ class BushidoData01Message extends BroadcastMessage {
     }
 }
 
-class BushidoData02Message extends BroadcastMessage {
+class BushidoData02Message extends BushidoMessage {
 
     constructor() {
         super([0xdc, 0x02, 0x00, 0x99, 0x00, 0x00, 0x00, 0x00]);
@@ -203,11 +203,20 @@ class BushidoUSB {
         this._in_buffer = [];
         this._log = log;
         this._connected = false;
+        this._run_interval_handle = null;
+        this._last_button_code = -1;
+        this._last_button_timestamp = 0;
 
         this.onPaused = onPaused;
         this.onResumed = onResumed;
         this.onDataUpdated = onDataUpdated;
         this.onDistanceUpdated = onDistanceUpdated;
+
+        this.onButtonLeft = null;
+        this.onButtonUp = null;
+        this.onButtonRight = null;
+        this.onButtonDown = null;
+        this.onButtonOK = null;
     }
 
     getData() {
@@ -226,7 +235,7 @@ class BushidoUSB {
         return this._connected;
     }
 
-    async init() {
+    async initUSBDevice() {
         this._device = await navigator.usb.requestDevice({
             filters: [{
                 vendorId: 0x0FCF,
@@ -239,24 +248,43 @@ class BushidoUSB {
 
         await this._device.selectConfiguration(1);
         this._log_info("config selected");
-        
+
         await this._device.claimInterface(0);
         this._log_info("interface claimed");
     }
 
-    async run() {
+    async connectToHeadUnit() {
+        return new Promise((resolve) => {
+            this._queueMessage(new BushidoInitPCConnectionMessage(), resolve);
+        });
+    }
+
+    async resetHeadUnit() {
+        return new Promise((resolve) => {
+            this._queueMessage(new BushidoResetHeadUnitMessage(), resolve);
+        });
+    }
+
+    async startCyclingCourse() {
+        return new Promise(resolve => {
+            this._queueMessage(new BushidoStartCyclingMessage(), resolve);
+        });
+    }
+
+    run() {
         this._initializeANTConnection();
-        this._initializeBushidoConnection();
+        this._sendReceiveCycle();
+    }
 
-        this._connected = true;
+    stop() {
+        clearTimeout(this._run_interval_handle);
+    }
 
-        // send & receive loop
-        this._running = true;
-        while (this._running) {
-            await this._sendMessage();
-            const in_message = await this._receiveMessage();
-            this._processMessage(in_message);
-        }
+    async _sendReceiveCycle() {
+        await this._sendMessage();
+        const in_message = await this._receiveMessage();
+        this._processMessage(in_message);
+        this._run_interval_handle = setTimeout(this._sendReceiveCycle.bind(this), 0);
     }
 
     _initializeANTConnection() {
@@ -265,13 +293,10 @@ class BushidoUSB {
         this._queueMessage(new SetChannelIdMessage(0x52));
         this._queueMessage(new SetChannelPeriodMessage(4096));
         this._queueMessage(new SetChannelRfFrequencyMessage(2460));
-        this._queueMessage(new OpenChannelMessage());
-    }
-
-    _initializeBushidoConnection() {
-        this._queueMessage(new BushidoInitPCConnectionMessage());
-        this._queueMessage(new BushidoResetHeadUnitMessage());
-        this._queueMessage(new BushidoStartCyclingMessage());
+        this._queueMessage(new OpenChannelMessage(), () => {
+            this._log_info("opened ANT connection");
+            this._connected = true;
+        });
     }
 
     _sendData() {
@@ -286,8 +311,11 @@ class BushidoUSB {
     async _sendMessage() {
         let out_message = null;
         do {
-            out_message = this._out_queue.shift();
-            if (out_message === undefined) break;
+            if (this._out_queue.length === 0) break;
+            const {
+                message: out_message,
+                callback,
+            } = this._out_queue.shift();
             const message_bytes = out_message.encode();
             await this._device.transferOut(1, message_bytes);
 
@@ -300,19 +328,21 @@ class BushidoUSB {
             while (true) {
                 const in_msg = await this._receiveMessage();
                 if (in_msg.getType() === 0x40) {
-                    if ((in_msg.getContent()[1] === out_message.getType())) {
+                    if (in_msg.getContent()[1] === out_message.getType()) {
                         clearInterval(interval_handle);
+                        if (callback !== null) callback();
                         break;
                     } else if (in_msg.getContent()[1] === 0x01 && in_msg.getContent()[2] === 0x03) {
                         clearInterval(interval_handle);
+                        if (callback !== null) callback();
                         break;
                     }
                 }
             }
 
-        } while (!(out_message instanceof BroadcastMessage));
+        } while (!(out_message instanceof BushidoMessage));
     }
-    
+
     async _receiveMessage() {
         let in_message = null;
         do {
@@ -325,6 +355,7 @@ class BushidoUSB {
                 const message_checksum = message_body[message_size + 1];
                 in_message = new Message(message_type, message_content);
                 if (in_message.checksum() !== message_checksum) {
+                    console.error(message_size, message_body);
                     throw new MessageChecksumError();
                 }
             }
@@ -340,16 +371,21 @@ class BushidoUSB {
                 this._data.speed = ((data[2] << 8) + data[3]) / 10.0;
                 this._data.power = (data[4] << 8) + data[5];
                 this._data.cadence = data[6];
+                this._log_info("received speed", this._data.speed, ", power", this._data.power, "and cadence", this._data.cadence);
                 if (this.onDataUpdated) this.onDataUpdated(this._data);
             } else if (data[1] === 0x02) {
                 const old_distance = this._data.distance;
                 this._data.distance = (((data[2] << 24) + data[3] << 16) + data[4] << 8) + data[5];
                 this._data.heart_rate = data[6];
+                this._log_info("received distance", this._data.distance, "and heart rate", this._data.heart_rate);
                 if (this.onDataUpdated) this.onDataUpdated(this._data);
                 if (old_distance !== this._data.distance && this.onDistanceUpdated) this.onDistanceUpdated(this._data.distance);
             } else if (data[1] === 0x03) {
                 this._data.break_temp = data[4];
+                this._log_info("received break temp:", this._data.break_temp);
                 if (this.onDataUpdated) this.onDataUpdated(this._data);
+            } else if (data[1] === 0x10) {
+                this._processButtonPress(data[2]);
             }
         } else if (data[0] === 0xad) {
             if (data[1] === 0x01 && data[2] === 0x02) {
@@ -366,8 +402,36 @@ class BushidoUSB {
         }
     }
 
-    _queueMessage(message) {
-        this._out_queue.push(message);
+    _processButtonPress(button_code) {
+        if (this._last_button_code !== button_code || Date.now() - this._last_button_timestamp > 1000) {
+            switch (button_code) {
+                case BushidoUSB.BUTTON_LEFT:
+                    this._log_info("<- left button pressed.");
+                    if (this.onButtonLeft) this.onButtonLeft();
+                    break;
+                case BushidoUSB.BUTTON_DOWN:
+                    this._log_info("v down button pressed.");
+                    if (this.onButtonDown) this.onButtonDown();
+                    break;
+                case BushidoUSB.BUTTON_UP:
+                    this._log_info("^ up button pressed.");
+                    if (this.onButtonUp) this.onButtonUp();
+                    break;
+                case BushidoUSB.BUTTON_RIGHT:
+                    this._log_info("-> right button pressed.");
+                    if (this.onButtonRight) this.onButtonRight();
+                    break;
+                default:
+                    this._log_info("unkown button was pressed.");
+            }
+
+            this._last_button_timestamp = Date.now();
+            this._last_button_code = button_code;
+        }
+    }
+
+    _queueMessage(message, callback = null) {
+        this._out_queue.push({ message, callback });
     }
 
     _log_info(...msg) {
@@ -388,3 +452,9 @@ class BushidoUSB {
         }
     }
 }
+
+BushidoUSB.BUTTON_LEFT = 0x01;
+BushidoUSB.BUTTON_DOWN = 0x02;
+BushidoUSB.BUTTON_OK = 0x03;
+BushidoUSB.BUTTON_UP = 0x04;
+BushidoUSB.BUTTON_RIGHT = 0x05;
