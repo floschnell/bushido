@@ -162,18 +162,18 @@
     <script src='https://unpkg.com/@turf/turf/turf.min.js'></script>
     <script src="./lib/chartist.js"></script>
     <script>
-        const bushidoConnection = new BushidoUSB();
-        let distance = 0;
-        let speed = 20;
+        const bushidoConnection = new BushidoUSB(console);
+        // let distance = 0;
+        // let speed = 20;
 
-        bushidoConnection.getData = function () {
-            return {
-                speed: speed * 3.6,
-                cadence: Math.random() * 100 % 60,
-                power: Math.random() * 200,
-                distance,
-            };
-        }
+        // bushidoConnection.getData = function () {
+        //     return {
+        //         speed: speed * 3.6,
+        //         cadence: Math.random() * 100 % 60,
+        //         power: Math.random() * 200,
+        //         distance,
+        //     };
+        // }
 
         const bushidoSimulator = new BushidoSimulator(bushidoConnection, {
             gpxFileInputId: "gpxFile",
@@ -186,14 +186,14 @@
             rewindButtonId: "rewind",
         });
 
-        window.setInterval(() => {
-            if (bushidoConnection.isConnected()) {
-                distance += speed;
-                bushidoSimulator.onDistanceUpdated(distance);
-                bushidoSimulator.onDataUpdated(bushidoConnection.getData());
-                speed = Math.abs(speed + Math.random() * 10 - 5);
-            }
-        }, 1000);
+        // window.setInterval(() => {
+        //     if (bushidoConnection.isConnected()) {
+        //         distance += speed;
+        //         bushidoSimulator.onDistanceUpdated(distance);
+        //         bushidoSimulator.onDataUpdated(bushidoConnection.getData());
+        //         speed = Math.abs(speed + Math.random() * 10 - 5);
+        //     }
+        // }, 1000);
 
     </script>
 </body>

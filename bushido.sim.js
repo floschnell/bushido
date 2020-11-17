@@ -85,12 +85,17 @@ class BushidoSimulator {
         this.lastRender = performance.now();
         this.bushidoConnection = bushidoConnection;
         this.recording = [];
+        this.activeChartMetric = 1;
 
         if (this.bushidoConnection != null) {
             this.bushidoConnection.onDataUpdated = this.onDataUpdated.bind(this);
             this.bushidoConnection.onPaused = this.onPaused.bind(this);
             this.bushidoConnection.onResumed = this.onResumed.bind(this);
             this.bushidoConnection.onDistanceUpdated = this.onDistanceUpdated.bind(this);
+            this.bushidoConnection.onButtonDown = this.onButtonDown.bind(this);
+            this.bushidoConnection.onButtonUp = this.onButtonUp.bind(this);
+            this.bushidoConnection.onButtonRight = this.onButtonRight.bind(this);
+            this.bushidoConnection.onButtonLeft = this.onButtonLeft.bind(this);
         }
 
         this.gpxFileInput = document.getElementById(gpxFileInputId);
@@ -173,6 +178,22 @@ class BushidoSimulator {
         });
     }
 
+    onButtonDown() {
+        this.activeChartMetric = ((this.activeChartMetric - 1 + CHART_METRICS.length) % CHART_METRICS.length) + 1;
+    }
+    
+    onButtonUp() {
+        this.activeChartMetric = ((this.activeChartMetric + 1 + CHART_METRICS.length) % CHART_METRICS.length) + 1;
+    }
+
+    onButtonLeft() {
+        this.seek(-1000);
+    }
+
+    onButtonRight() {
+        this.seek(1000);
+    }
+
     export() {
         const lines = this.recording.map((entry) => {
             const pos = this._getPosByDistance(entry.distance);
@@ -195,8 +216,10 @@ class BushidoSimulator {
       }
 
     seek(value) {
-        this.offset += value;
-        this.onDistanceUpdated(this.bushidoConnection.getData().distance);
+        if (this.bushidoConnection.getData().distance + this.offset + value >= 0) {
+            this.offset += value;
+            this.onDistanceUpdated(this.bushidoConnection.getData().distance);
+        }
     }
 
     getAverage() {
@@ -222,7 +245,19 @@ class BushidoSimulator {
                 parser.parse(gpxData);
                 this.smoothedSegments = this._smooth(parser);
 
-                await this.bushidoConnection.init();
+                await this.bushidoConnection.initUSBDevice();
+
+                this.bushidoConnection.run();
+
+                console.log("waiting for head unit ...");
+                await this.bushidoConnection.connectToHeadUnit();
+                console.log("connection established!");
+
+                await this.bushidoConnection.resetHeadUnit();
+                console.log("head unit reset.");
+
+                await this.bushidoConnection.startCyclingCourse();
+                console.log("cycling started!");
 
                 this.gameElement.style.display = "flex";
                 this.startElement.style.display = "none";
@@ -235,8 +270,6 @@ class BushidoSimulator {
                 this.onDistanceUpdated(0);
                 this.onPaused();
                 this.onDataUpdated(new BushidoData());
-
-                await this.bushidoConnection.run();
             } catch (e) {
                 console.error(e);
             }
@@ -392,7 +425,7 @@ class BushidoSimulator {
 
             dataset.data.splice(0);
             dataset.data.push(...metricData);
-            dataset.hidden = (Math.round(Date.now() / 10000) % CHART_METRICS.length) + 1 !== chartMetric.datasetIndex;
+            dataset.hidden = this.activeChartMetric !== chartMetric.datasetIndex;
         }
         
         this.chart.options.scales.xAxes[0].ticks.min = Math.max(0, index - buffer) * 20;
